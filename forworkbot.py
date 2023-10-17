@@ -1048,12 +1048,12 @@ async def notification_signer(idQueue):
 async def notification_assigner():
 	print('starting assign')
 	cur.execute(	'SELECT User.chat_id, Meeting.notificationText, Meeting.notificationTime, Meeting.date, Meeting.name \
-					FROM Queue, User, Meeting \
+					FROM Queue, User \
+					JOIN Meeting ON Queue.idMeeting = Meeting.id \
 					WHERE User.id=Queue.idUser AND Queue.idMeeting=Meeting.id AND Meeting.allowNotification=TRUE AND \
 					Meeting.date > DATETIME(\'now\', \'localtime\') AND strftime(\'%Y-%m-%d\', Meeting.date) = strftime(\'%Y-%m-%d\', \'now\') AND \
 					(Meeting.cost IS NOT NULL AND Queue.payStatus=TRUE OR Meeting.cost IS NULL) \
-			 		ORDER BY Queue.payDate ASC, Queue.id ASC \
-					LIMIT (SELECT maxUsers FROM Meeting);')
+			 		ORDER BY Queue.payDate ASC, Queue.id ASC;')
 	result = cur.fetchall()
 	cur.execute(	'SELECT User.chat_id, Meeting.notificationTime, Meeting.date, Meeting.name \
 					FROM Queue, User, Meeting \
