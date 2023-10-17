@@ -3,7 +3,8 @@ import logging
 import time
 import aioschedule
 import datetime
-from aiogram import Bot, Dispatcher, types
+from datetime import date
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import Message
 from aiogram.types import CallbackQuery
 from aiogram.filters.command import Command
@@ -15,8 +16,11 @@ from aiogram.methods.send_message import SendMessage
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.strategy import FSMStrategy
-#from aiogram_dialog import DialogManager
-#from aiogram_dialog.widgets.kbd import Calendar
+
+from aiogram_dialog import DialogManager, Dialog, Window, setup_dialogs, StartMode
+from aiogram_dialog.widgets.kbd import Calendar
+from aiogram_dialog.widgets.text import Format
+
 import sqlite3
 
 # region some important stuff
@@ -31,6 +35,19 @@ class Text(Filter): #Раньше использовалась старая ве
 			#print(1,  message.text, self.text)
 		except:
 			res =  message.data == self.text
+			#print(2,  message.data, self.text)
+		
+		return res
+class SUPERText(Filter): #Раньше использовалась старая версия aiogram, в которой был этот фильтр, и я к нему привык. Поэтому он теперь красуется тут, копать его-колотить(((
+	def __init__(self, text: str) -> None:
+		self.text = text
+
+	async def __call__(self, message: Message | CallbackQuery) -> bool:
+		try:
+			res = self.text in message.text
+			#print(1,  message.text, self.text)
+		except:
+			res = self.text in message.data
 			#print(2,  message.data, self.text)
 		
 		return res
@@ -56,6 +73,8 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.CHAT)
 
+glob = {'tst': []}
+
 class Status(StatesGroup):
 	nothing = State()
 	newNameForMeeting = State()
@@ -65,6 +84,7 @@ class Status(StatesGroup):
 	newNotifications2 = State()
 	newGuestCount = State()
 	newCost = State()
+	newTime = State()
 	newDate = State()
 
 	reg = State()
@@ -75,6 +95,8 @@ class Status(StatesGroup):
 	info11 = State()
 	info12 = State()
 
+	info1cal = State()
+	
 	info2 = State()
 	info3 = State()
 	info4 = State()
@@ -102,8 +124,25 @@ class Status(StatesGroup):
 	redactMeetingGuestCount = State()
 	redactMeetingCost = State()
 	redactMeetingDate = State()
-# endregion
 
+	startName1 = State()
+	startName2 = State()
+
+	shareGuest = State()
+	shareUser = State()
+	shareID = State()
+
+	calenka = State()
+	calenka2 = State()
+
+	adminPayId = State()
+	adminPayIdUser = State()
+
+	adminGuestIdUser = State()
+	adminNewIdUser = State()
+	adminUserCheck = State()
+
+# endregion
 # region start and stuff
 
 async def isUserReg(someStuff: Message | CallbackQuery):
@@ -114,14 +153,146 @@ async def isUserReg(someStuff: Message | CallbackQuery):
 	return res and 1
 
 @dp.message(Command('start'))
-async def send_welcome(message: types.Message):
-	await message.reply("Телеграм бот для записи на мероприятие.\nПо всем попросам к @Wolchenok57.")
+async def send_welcome(message: types.Message, state: FSMContext):
+	parts = (message.text +  ' ').split(' ')
+	if message.text == '/start':
+		await message.reply("Телеграм бот для записи на мероприятие.\nПо всем попросам к @Wolchenok57.")
+		if await isUserReg(message):
+			cur.execute('SELECT `name1`, `name2` FROM `User` WHERE `id`=?;', (message.from_user.id, ))
+			res = cur.fetchall()[0]
+			
+			name1  = res[0]
+			name2  = res[1]
+			idUser = int(message.from_user.id)
+			cur.execute('UPDATE `User` SET `name1`=?, `name2`=?, `chat_id`=?, `telega_name`=?, `telega_tag`=? WHERE `id`=?;', (name1, name2, message.chat.id, message.from_user.full_name, message.from_user.username, idUser))
+			conn.commit()
+		"/start [guest|user] [callback.from_user.id-idMeeting|idMeeting]"
+	elif (parts[0] + ' ' + parts[1]) == '/start guest' and len(parts)>3:
+		if await isUserReg(message):
+			await message.answer('Вы уже есть в системе')
+			cur.execute('SELECT `name1`, `name2` FROM `User` WHERE `id`=?;', (message.from_user.id, ))
+			res = cur.fetchall()[0]
+			
+			name1  = res[0]
+			name2  = res[1]
+			idUser = int(message.from_user.id)
+			cur.execute('UPDATE `User` SET `name1`=?, `name2`=?, `chat_id`=?, `telega_name`=?, `telega_tag`=? WHERE `id`=?;', (name1, name2, message.chat.id, message.from_user.full_name, message.from_user.username, idUser))
+			conn.commit()
+		else:
+			idUser = int(message.from_user.id)
+			idChat = message.chat.id
+			telega_name = message.from_user.full_name
+			telega_tag = message.from_user.username
+
+			cur.execute('INSERT INTO `User` VALUES(?, ?, ?, ?, ?, ?)', (idUser, '*Заменить*', '*Заменить*', idChat, telega_name, telega_tag))
+			conn.commit()
+		try:
+			if not (await isUserReg(message)): await message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+			idUser, idMeeting = parts[2].split('-')
+			cur.execute('SELECT `idUser` FROM `Queue` WHERE `Queue`.`idUser`=? AND `Queue`.`idMeeting`=?;', (int(message.from_user.id), idMeeting))
+			da = cur.fetchall()
+			if da:
+				#await message.answer('Вы успешно были записаны в очередь!')
+				await notification_de_signer()
+			else:
+				#cur.execute('SELECT `idCreator` FROM `Meeting` WHERE `Meeting`.`id`=?;', (idMeeting, ))
+				#idCreator = cur.fetchall()[0][0]
+				cur.execute('INSERT INTO `Queue` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?);', (int(idMeeting), int(message.from_user.id), int(idUser), False, None, True, False))
+				await notification_signer(cur.lastrowid)
+				conn.commit()
+			#if not da:await message.answer('Вы успешно были записаны в очередь!')
+		except:
+			await message.answer('Что-то пошло не так! В данный момент запись на это мероприятие невозможна.')
+	
+		await message.answer('Вы были приглашены! Уточните, пожалуйста некоторые данные.')
+		await message.answer('Введите Ваше имя:')
+		await state.set_state(Status.startName1)
+		
+	elif (parts[0] + ' ' + parts[1]) == '/start user' and len(parts)>3:
+		if await isUserReg(message):
+			await message.answer('Вы уже есть в системе')
+			cur.execute('SELECT `name1`, `name2` FROM `User` WHERE `id`=?;', (message.from_user.id, ))
+			res = cur.fetchall()[0]
+			
+			name1  = res[0]
+			name2  = res[1]
+			idUser = int(message.from_user.id)
+			cur.execute('UPDATE `User` SET `name1`=?, `name2`=?, `chat_id`=?, `telega_name`=?, `telega_tag`=? WHERE `id`=?;', (name1, name2, message.chat.id, message.from_user.full_name, message.from_user.username, idUser))
+			conn.commit()
+		else:
+			idUser = int(message.from_user.id)
+			idChat = message.chat.id
+			telega_name = message.from_user.full_name
+			telega_tag = message.from_user.username
+
+			cur.execute('INSERT INTO `User` VALUES(?, ?, ?, ?, ?, ?)', (idUser, '*Заменить*', '*Заменить*', idChat, telega_name, telega_tag))
+			conn.commit()
+		try:
+			if not (await isUserReg(message)): await message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+			idMeeting = parts[2]
+			cur.execute('SELECT `idUser` FROM `Queue` WHERE `Queue`.`idUser`=? AND `Queue`.`idMeeting`=?;', (int(message.from_user.id), idMeeting))
+			da = cur.fetchall()
+			if da:
+				#await message.answer('Вы успешно были записаны в очередь!')
+				await notification_de_signer()
+			else:
+				cur.execute('SELECT `idCreator` FROM `Meeting` WHERE `Meeting`.`id`=?;', (idMeeting, ))
+				idCreator = cur.fetchall()[0][0]
+				cur.execute('INSERT INTO `Queue` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?);', (int(idMeeting), int(message.from_user.id), int(idCreator), False, None, True, False))
+				await notification_signer(cur.lastrowid)
+				conn.commit()
+			#if not da:await message.answer('Вы успешно были записаны в очередь!')
+		except:
+			await message.answer('Что-то пошло не так! В данный момент запись на это мероприятие невозможна.')
+	
+		await message.answer('Вы были приглашены! Уточните, пожалуйста некоторые данные.')
+		await message.answer('Введите Ваше имя:')
+		await state.set_state(Status.startName1)
+	else: await message.answer('Команда не распознана')
+
+@dp.message(Status.startName1)
+async def startName1Wait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="startName2"))
+	await state.update_data(name1=message.text)
+	await message.answer('Ваше имя точно ' + str((await state.get_data())['name1']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(Text("startName2"))
+async def startName2(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите Вашу фамилию:')
+	await state.set_state(Status.startName2)
+
+@dp.message(Status.startName2)
+async def startName2Wait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="startCreate"))
+	await state.update_data(name2=message.text)
+	await message.answer('Ваша фамилия точно ' + str((await state.get_data())['name2']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+
+
+@dp.callback_query(Text("startCreate"))
+async def startCreate(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	#if await isUserReg(callback): await callback.message.answer('Вы уже есть в системе'); await state.set_state(Status.nothing); return 0
+	resObj = await state.get_data()
+	name1  = resObj['name1']
+	name2  = resObj['name2']
+	idUser = int(callback.from_user.id)
+	#cur.execute('INSERT INTO `User` VALUES(?, ?, ?, ?, ?, ?)', (idUser, name1, name2, callback.message.chat.id, callback.from_user.full_name, callback.from_user.username))
+	cur.execute('UPDATE `User` SET `name1`=?, `name2`=?, `chat_id`=?, `telega_name`=?, `telega_tag`=? WHERE `id`=?;', (name1, name2, callback.message.chat.id, callback.from_user.full_name, callback.from_user.username, idUser))
+	conn.commit()
+	
+	await callback.message.answer('Добавляю запись.')
+	await state.set_state(Status.nothing)
+
 
 # endregion
 # region reg
 
 @dp.message(Command('reg'))
-async def putInReg(message: types.Message, state: FSMContext):
+async def reg(message: types.Message, state: FSMContext):
 	if message.text == '/reg':
 		await state.clear()
 		if await isUserReg(message): await message.answer('Вы уже есть в системе'); await state.set_state(Status.nothing); return 0
@@ -246,7 +417,7 @@ async def newMeetingCheck(callback: types.CallbackQuery, state: FSMContext):
 			else:
 				txt += '\nСтоимость: ' + str(data['cost'])
 		else: kbb.add(types.InlineKeyboardButton(text='Указать стоимость', callback_data="newCost"))
-		if 'date' in data: txt += '\nДата: ' + str(data['date'].strftime('%m.%d.%y %H:%M'))
+		if 'date' in data: txt += '\nДата: ' + str(data['date'].strftime('%d.%m.%y %H:%M'))
 		else: kbb.add(types.InlineKeyboardButton(text='Указать дату', callback_data="newDate"))
 		kbb.adjust(1, repeat=True)
 		if 'name' and data and 'notif' in data and 'guest' in data and 'cost' in data and 'date' in data:
@@ -376,42 +547,82 @@ async def newCostFree(callback: types.CallbackQuery, state: FSMContext):
 	await state.update_data(cost=-1)
 	await newMeetingCheck(callback, state)
 
+# region календарь, мать его
+async def choiceOfAges1(callback: CallbackQuery, widget,
+						manager: DialogManager, selected_date: date):
+	print('asd2')
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="newTime"))
+	await callback.message.answer('Дата правильная: ' + str(selected_date) + '?', reply_markup=kbb.as_markup(resize_keyboard=True))
+	
 
+	#await state.update_data(date=selected_date)
+	#await state.set_state(Status.newTime)
 
-@dp.callback_query(Text("newDate"))
-async def newDate(callback: types.CallbackQuery, state: FSMContext):
+async def choiceOfAges2(callback: CallbackQuery, widget,
+						manager: DialogManager, selected_date: date):
+	print('info1cal1')
 	await callback.answer()
-	await callback.message.answer('Пожалуйста, введите дату в формате "ДД.ММ.ГГ ЧЧ:ММ":')
+	date1 = datetime.datetime.strptime(selected_date.strftime('%d.%m.%y') + ' 00:00:00', '%d.%m.%y %H:%M:%S') + datetime.timedelta(days=0)
+	date2 = datetime.datetime.strptime(selected_date.strftime('%d.%m.%y') + ' 23:59:59', '%d.%m.%y %H:%M:%S') + datetime.timedelta(days=0)
+	result = await findMeetingBetweenDates(date1.strftime('%Y-%m-%d %H:%M:%S'), date2.strftime('%Y-%m-%d %H:%M:%S'))
+	for item in result:
+		await callback.message.answer(item[0], reply_markup=item[1].as_markup(resize_keyboard=True))
 
+calendar = Calendar(id='calendar1', on_click = choiceOfAges1)
+calendar2 = Calendar(id='calendar2', on_click = choiceOfAges2)
+
+dialog = Dialog(Window(Format("Выберите дату:"), calendar, state=Status.calenka), 
+				Window(Format("Выберите дату:"), calendar2, state=Status.calenka2))
+
+#calendar2 = Calendar(id='calendar2', on_click = choiceOfAges2)
+#dialog2 = Dialog(Window(Format("Выберите дату:"), calendar2, state=Status.calenka2))
+#dp.include_router(dialog2)
+#da = setup_dialogs(dp)
+
+dp.include_router(dialog)
+setup_dialogs(dp)
+
+
+@dp.callback_query(Text("newDate"))#Status.newDate)
+async def tst(callback: types.CallbackQuery, dialog_manager: DialogManager, state: FSMContext):
+	#await state.set_state(Status.calenka)
+	await callback.answer()
+	print('asd')
+	await dialog_manager.start(Status.calenka)
+
+
+	#await bot.answer_callback_query(callback_query_id='dadada', show_alert=False, text="Callback query was sent successfully")
 	await state.set_state(Status.newDate)
+# endregion
+	
 
-@dp.message(Status.newDate)
-async def newCost(message: types.Message, state: FSMContext):
-	try:
-		#print('1')
-		#dada = message.text.split(' ')
-		#dada[0] = dada[0].split('.')
-		#dada[1] = dada[1].split(':')
-		#dada = dada[0] + dada[1]
-		#print(dada)
-		#print(int(dada[0]) < 32, int(dada[1]) < 13, int(dada[2]) < 100, int(dada[3]) < 24, int(dada[4]) < 60, int(dada[5]) < 60)
-		#print(int(dada[0]) > 0, int(dada[1])  > 0, int(dada[2])  > 23, int(dada[3])  >= 0, int(dada[4]) >= 0, int(dada[5]) >= 0)
-		#if (int(dada[0]) < 32 and int(dada[1]) < 13 and int(dada[2]) < 100 and int(dada[3]) < 24 and int(dada[4]) < 60 and int(dada[5]) < 60) and (
-		#	int(dada[0]) > 0  and int(dada[1]) > 0  and int(dada[2]) > 0  and int(dada[3]) >= 0 and int(dada[4]) >= 0 and int(dada[5]) >= 0):
-			#print('3')
-		print(message.text)
-		print(datetime.datetime.strptime(message.text, '%m.%d.%y %H:%M'))
+
+
+@dp.callback_query(Text("newTime"))
+async def newTime(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	print(callback.message.text.split(':')[1][1:-1])
+	await state.update_data(partdate=datetime.datetime.strptime(callback.message.text.split(':')[1][1:-1], '%Y-%m-%d'))#2023-10-26
+	#print(await state.get_data())
+
+	await callback.message.answer('Пожалуйста, введите время в формате "ЧЧ:ММ":')
+	await state.set_state(Status.newTime)
+
+@dp.message(Status.newTime)
+async def newTimeWait(message: types.Message, state: FSMContext):
+	#try:
+		print(message.text, await state.get_data())
+		#print(datetime.datetime.strptime(message.text, '%d.%m.%y %H:%M'))
 		kbb = InlineKeyboardBuilder()
 		kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="newMeetingCheck"))
-		await state.update_data(date=datetime.datetime.strptime(message.text, '%d.%m.%y %H:%M'))
-		await message.answer('Дата правильная: ' + message.text + '?', reply_markup=kbb.as_markup(resize_keyboard=True))
-		
-			
-	except:
-		await message.answer('Дата не распознана. Пожалуйста, введите дату в формате "ДД.ММ.ГГ ЧЧ:ММ:CC".')
+		await state.update_data(date=(await state.get_data())['partdate'] + datetime.timedelta(hours=int(message.text.split(':')[0]), minutes=int(message.text.split(':')[1])))
+		await message.answer('Время правильное: ' + message.text + '?', reply_markup=kbb.as_markup(resize_keyboard=True))
+	#except:
+	#	await message.answer('Время не распознано. Пожалуйста, введите время в формате "ЧЧ:ММ".')
 
 @dp.callback_query(Text("newCreate"))
-async def addHumanDescription(callback: types.CallbackQuery, state: FSMContext):
+async def newCreate(callback: types.CallbackQuery, state: FSMContext):
 	await callback.answer()
 	print(callback.from_user.id, callback.message.from_user.id)
 	if not (await isUserReg(callback)): await callback.message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
@@ -423,16 +634,20 @@ async def addHumanDescription(callback: types.CallbackQuery, state: FSMContext):
 	cost  = int(resObj['cost'])  if resObj['cost']  > 0 else 'NULL'
 	data  = resObj['date']
 	cur.execute('INSERT INTO `Meeting` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?)', (name, int(callback.from_user.id), notif != 'NULL', notxt, notif, guest, cost, data))
+	theID = cur.lastrowid
 	conn.commit()
-
-	await callback.message.answer('Добавляю запись.')
+	await callback.message.answer('Добавляю запись. Чтобы поделиться отправьте пользователю следующее сообщение.')
+	await callback.message.answer('Вы приглашены на мероприятие' + str(name) + \
+				'! Чтобы на него записаться, введите боту "/start user ' + str(theID) + \
+				'" или, если Вы уже в системе, то "/info meeting join ' + str(theID) + '"')
 	await state.set_state(Status.nothing)
 
 # endregion
 # region info
 
 @dp.message(Command('info'))
-async def putInReg(message: types.Message, state: FSMContext):
+async def info(message: types.Message, state: FSMContext):
+	parts = (message.text +  ' ').split(' ')
 	if message.text == '/info':
 		await state.clear()
 		txt = 'Для получения трубуемой информации нужно нажать кнопки снизу.'
@@ -469,6 +684,28 @@ async def putInReg(message: types.Message, state: FSMContext):
 		kbb.adjust(1, repeat=True)
 		await message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
 		await state.set_state(Status.info1)
+	elif (parts[0] + ' ' + parts[1] + ' ' + parts[2]) == '/info meeting join' and len(parts)>3:
+		if not (await isUserReg(message)): await message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+		try:
+			if not ('-' in parts[3]):
+				idMeeting = parts[3]
+				cur.execute('SELECT `idCreator` FROM `Meeting` WHERE `Meeting`.`id`=?;', (idMeeting, ))
+				idUser = cur.fetchall()[0][0]
+			else:
+				idUser, idMeeting = parts[3].split('-')
+			cur.execute('SELECT `idUser` FROM `Queue` WHERE `Queue`.`idUser`=? AND `Queue`.`idMeeting`=?;', (int(message.from_user.id), idMeeting))
+			da = cur.fetchall()
+			if da:
+				await message.answer('Вы уже были записаны в очередь!')
+				await notification_de_signer()
+			else:
+				
+				cur.execute('INSERT INTO `Queue` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?);', (int(idMeeting), int(message.from_user.id), int(idUser), False, None, True, False))
+				await notification_signer(cur.lastrowid)
+				conn.commit()
+			if not da:await message.answer('Вы успешно были записаны в очередь!')
+		except:
+			await message.answer('Что-то пошло не так! В данный момент запись на это мероприятие невозможна.')
 	elif message.text == '/info meeting date':
 		txt = 'Введите дату события в формате ДД.ММ.ГГ или нажмите на кнопку с датой:'
 		kbb = InlineKeyboardBuilder()
@@ -569,7 +806,7 @@ async def showQueue(idMeeting = None, idUser = None, showAll = False, showFull =
 					FROM `Queue`, `User` \
 					INNER JOIN `Meeting` ON `Queue`.`idMeeting` = `Meeting`.`id` \
 					WHERE ' + ('`Queue`.`idMeeting` = ? AND ' if not showAll else '') + ('`Queue`.`attendStatus` = TRUE AND ' if onlyAttend else '') + ('(`Queue`.`payStatus` = TRUE OR `Meeting`.`cost`=\'NULL\') AND ' if onlyPays else '') + '`Queue`.`idUser` = `User`.`id`' + (' AND `Queue`.`idUser` = ? ' if guestOfUser else '') + \
-					'ORDER BY `Queue`.`payDate` ASC, `Meeting`.`date` ASC' + \
+					'ORDER BY `Queue`.`payDate` ASC, `Queue`.`id` ASC' + \
 					(' LIMIT (SELECT `maxUsers` FROM `Meeting`);' if not showFull else ''), ((idMeeting, idUser) if not showAll else (idUser, )) if guestOfUser else ((idMeeting, ) if not showAll else ()))
 	result = cur.fetchall()
 	cur.execute('SELECT `Meeting`.`maxUsers` FROM `Meeting` WHERE `Meeting`.`id`=?', (idMeeting, ))
@@ -615,6 +852,7 @@ async def info1(callback: types.CallbackQuery, state: FSMContext):
 	kbb = InlineKeyboardBuilder()
 	kbb.add(types.InlineKeyboardButton(text='Сегодня', callback_data="info1Today"))
 	kbb.add(types.InlineKeyboardButton(text='Завтра', callback_data="info1Tomorrow"))
+	kbb.add(types.InlineKeyboardButton(text='Открыть календарь', callback_data="info1cal"))
 	kbb.adjust(1, repeat=True)
 	await callback.message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
 	await state.set_state(Status.info11)
@@ -636,6 +874,25 @@ async def info1Tomorrow(callback: types.CallbackQuery, state: FSMContext):
 	result = await findMeetingBetweenDates(date1.strftime('%Y-%m-%d %H:%M:%S'), date2.strftime('%Y-%m-%d %H:%M:%S'))
 	for item in result:
 		await callback.message.answer(item[0], reply_markup=item[1].as_markup(resize_keyboard=True))
+
+
+
+
+# region календарь, мать его 2
+
+@dp.callback_query(Text("info1cal"))#Status.newDate)
+async def info1cal(callback: types.CallbackQuery, dialog_manager: DialogManager, state: FSMContext):
+	#await state.set_state(Status.calenka)
+	await callback.answer()
+	print('info1cal2')
+	await dialog_manager.start(Status.calenka2)
+
+
+	#await bot.answer_callback_query(callback_query_id='dadada', show_alert=False, text="Callback query was sent successfully")
+	await state.set_state(Status.info1cal)
+# endregion
+
+
 
 @dp.message(Status.info11)
 async def info1Exec(message: types.Message, state: FSMContext):
@@ -775,26 +1032,49 @@ async def notification_de_signer():
 	await on_startup_and_daily()
 
 async def notification_signer(idQueue):
-	cur.execute(	'SELECT User.chat_id, Meeting.notificationText, Meeting.notificationTime, Meeting.date \
+	cur.execute(	'SELECT User.chat_id, Meeting.notificationText, Meeting.notificationTime, Meeting.date, Meeting.name \
 					FROM Queue, User, Meeting  \
 					WHERE Queue.id=? AND Queue.idMeeting=Meeting.id AND \
 					Meeting.date > DATETIME(\'now\', \'localtime\') AND \
 					strftime(\'%Y-%m-%d\', Meeting.date) = strftime(\'%Y-%m-%d\', \'now\');', (idQueue, ))
 	result = cur.fetchall()
-	if result: aioschedule.every().day.at((datetime.datetime.strptime(result[0][3], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(minutes=int(result[0][2]))).strftime('%H:%M')).do(notification_dealer, result[0][0], result[0][1])
+	if result: aioschedule.every().day.at((datetime.datetime.strptime(result[0][3], '%Y-%m-%d %H:%M:%S') - \
+			datetime.timedelta(minutes=int(result[0][2]))).strftime('%H:%M')).do(
+				notification_dealer, result[0][0], \
+				'"' + str(result[0][4]) + '" - ' + datetime.datetime.strptime(result[0][3], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%y %H:%M') + ':\n' + str(result[0][1])
+			)
 
 
 async def notification_assigner():
 	print('starting assign')
-	cur.execute(	'SELECT User.chat_id, Meeting.notificationText, Meeting.notificationTime, Meeting.date \
+	cur.execute(	'SELECT User.chat_id, Meeting.notificationText, Meeting.notificationTime, Meeting.date, Meeting.name \
 					FROM Queue, User, Meeting \
 					WHERE User.id=Queue.idUser AND Queue.idMeeting=Meeting.id AND Meeting.allowNotification=TRUE AND \
-					Meeting.date > DATETIME(\'now\', \'localtime\') AND strftime(\'%Y-%m-%d\', Meeting.date) = strftime(\'%Y-%m-%d\', \'now\');')
+					Meeting.date > DATETIME(\'now\', \'localtime\') AND strftime(\'%Y-%m-%d\', Meeting.date) = strftime(\'%Y-%m-%d\', \'now\') AND \
+					(Meeting.cost IS NOT NULL AND Queue.payStatus=TRUE OR Meeting.cost IS NULL) \
+			 		ORDER BY Queue.payDate ASC, Queue.id ASC \
+					LIMIT (SELECT maxUsers FROM Meeting);')
 	result = cur.fetchall()
-	print(result)
-	if not result: print('nothing to do here'); return 0
+	cur.execute(	'SELECT User.chat_id, Meeting.notificationTime, Meeting.date, Meeting.name \
+					FROM Queue, User, Meeting \
+					WHERE User.id=Queue.idUser AND Queue.idMeeting=Meeting.id AND Meeting.allowNotification=TRUE AND \
+					(Meeting.idCreator=User.id OR Queue.isNewAdmin = TRUE) AND \
+					Meeting.date > DATETIME(\'now\', \'localtime\') AND strftime(\'%Y-%m-%d\', Meeting.date) = strftime(\'%Y-%m-%d\', \'now\');')
+	admins = cur.fetchall()
+	print(result, admins)
+	if not result and not admins: print('nothing to do here'); return 0
 	for item in result:
-		aioschedule.every().day.at((datetime.datetime.strptime(item[3], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(minutes=int(item[2]))).strftime('%H:%M')).do(notification_dealer, item[0], item[1])
+		aioschedule.every().day.at((datetime.datetime.strptime(item[3], '%Y-%m-%d %H:%M:%S') - \
+			datetime.timedelta(minutes=int(item[2]))).strftime('%H:%M')).do(
+				notification_dealer, item[0], \
+				'"' + str(item[4]) + '" - ' + datetime.datetime.strptime(item[3], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%y %H:%M') + ':\n' + str(item[1])
+			)
+	for item in admins:
+		aioschedule.every().day.at((datetime.datetime.strptime(item[2], '%Y-%m-%d %H:%M:%S') - \
+			datetime.timedelta(minutes=int(item[1]))).strftime('%H:%M')).do(
+				notification_dealer, item[0], \
+				'Уведомления о событии "' + str(item[3]) + '" - ' + datetime.datetime.strptime(item[2], '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%y %H:%M') + ' рассылаются участникам.'
+			)
 	await aioschedule.run_pending()
 	print('all assigned')
 # endregion
@@ -1329,7 +1609,7 @@ async def redactMeetingCheck(callback: types.CallbackQuery, state: FSMContext):
 	else:
 		txt += '\nСтоимость: ' + str(data['cost'])
 	kbb.add(types.InlineKeyboardButton(text='Указать стоимость', callback_data="redactMeetingCost"))
-	txt += '\nДата: ' + str(data['date'].strftime('%m.%d.%y %H:%M'))
+	txt += '\nДата: ' + str(data['date'].strftime('%d.%m.%y %H:%M'))
 	kbb.add(types.InlineKeyboardButton(text='Указать дату', callback_data="redactMeetingDate"))
 	kbb.adjust(1, repeat=True)
 	kbb.add(types.InlineKeyboardButton(text='Применить!', callback_data="redactMeetingCreate"))
@@ -1471,7 +1751,7 @@ async def redactMeetingDate(callback: types.CallbackQuery, state: FSMContext):
 async def redactMeetingCost(message: types.Message, state: FSMContext):
 	try:
 		print(message.text)
-		print(datetime.datetime.strptime(message.text, '%m.%d.%y %H:%M'))
+		print(datetime.datetime.strptime(message.text, '%d.%m.%y %H:%M'))
 		kbb = InlineKeyboardBuilder()
 		kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="redactMeetingCheck"))
 		await state.update_data(date=datetime.datetime.strptime(message.text, '%d.%m.%y %H:%M'))
@@ -1480,7 +1760,7 @@ async def redactMeetingCost(message: types.Message, state: FSMContext):
 		await message.answer('Дата не распознана. Пожалуйста, введите дату в формате "ДД.ММ.ГГ ЧЧ:ММ:CC".')
 
 @dp.callback_query(Text("redactMeetingCreate"))
-async def addHumanDescription(callback: types.CallbackQuery, state: FSMContext):
+async def redactMeetingCreate(callback: types.CallbackQuery, state: FSMContext):
 	await callback.answer()
 	print(callback.from_user.id, callback.message.from_user.id)
 	if not (await isUserReg(callback)): await callback.message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
@@ -1491,7 +1771,9 @@ async def addHumanDescription(callback: types.CallbackQuery, state: FSMContext):
 	guest = int(resObj['guest'])
 	cost  = int(resObj['cost'])  if resObj['cost']  > 0 else 'NULL'
 	data  = resObj['date']
-	cur.execute('INSERT INTO `Meeting` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?)', (name, int(callback.from_user.id), notif != 'NULL', notxt, notif, guest, cost, data))
+	idMeeting = resObj['id']
+	#cur.execute('INSERT INTO `Meeting` VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?)', (name, int(callback.from_user.id), notif != 'NULL', notxt, notif, guest, cost, data))
+	cur.execute('UPDATE `Meeting` SET `name`=?, `idCreator`=?, `allowNotification`=?, `notificationText`=?, `notificationTime`=?, `maxUsers`=?, `cost`=?, `date`=? WHERE `id`=?;', (name, int(callback.from_user.id), notif != 'NULL', notxt, notif, guest, cost, data, idMeeting))
 	conn.commit()
 
 	await callback.message.answer('Добавляю запись.')
@@ -1501,6 +1783,8 @@ async def addHumanDescription(callback: types.CallbackQuery, state: FSMContext):
 
 # endregion
 # region help
+
+
 
 @dp.message(Command('help'))
 async def send_welcome(message: types.Message):
@@ -1525,16 +1809,484 @@ async def send_welcome(message: types.Message):
 		
 # endregion
 
+# region share
+
+@dp.message(Command('share'))
+async def share(message: types.Message, state: FSMContext):
+	parts = (message.text +  ' ').split(' ')
+	if message.text == '/share':
+		await state.clear()
+		txt = 'Для получения трубуемой информации нужно нажать кнопки снизу. Если вы делитесь своим событием, используйте только второй вариант.'
+		kbb = InlineKeyboardBuilder()
+		kbb.add(types.InlineKeyboardButton(text='Пригласить как Вашего гостя (3 на событие максимум)', callback_data="shareGuest"))
+		kbb.add(types.InlineKeyboardButton(text='Пригласить как простого пользователя', callback_data="shareUser"))
+		kbb.adjust(1, repeat=True)
+		await message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
+		await state.set_state(Status.share)
+
+	elif (parts[0] + ' ' + parts[1]) == '/share guest' and len(parts)>3:
+		name = ' '.join(parts[3:-1])
+		await message.answer('Чтобы поделиться отправьте пользователю следующее сообщение.')
+		await message.answer('Вы приглашены на мероприятие' + (' ' + name if name else '') + '! Чтобы на него записаться, введите боту "/start guest ' + str(message.from_user.id) + '-' + parts[2] + '" или, если Вы уже в системе, то "/info meeting join ' + str(message.from_user.id) + '-' + parts[2] + '"')
+	elif (parts[0] + ' ' + parts[1]) == '/share user' and len(parts)>3:
+		name = ' '.join(parts[3:-1])
+		await message.answer('Чтобы поделиться отправьте пользователю следующее сообщение.')
+		await message.answer('Вы приглашены на мероприятие' + (' ' + name if name else '') + '! Чтобы на него записаться, введите боту "/start user ' + parts[2] + '" или, если Вы уже в системе, то "/info meeting join ' + parts[2] + '"')
+	
+	else:
+		await message.answer('Команда не распознана')
+
+@dp.callback_query(Text("shareGuest"))
+async def shareGuest(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID события:')
+	await state.set_state(Status.shareGuest)
+
+@dp.message(Status.shareGuest)
+async def shareGuestWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="shareID"))
+	await state.update_data(idMeeting=message.text)
+	await state.update_data(isGuest=True)
+	await message.answer('ID события точно ' + str((await state.get_data())['idMeeting']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(Text("shareUser"))
+async def shareUser(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID события (его можно узнать в /info):')
+	await state.set_state(Status.shareUser)
+
+@dp.message(Status.shareUser)
+async def shareUserWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="shareID"))
+	await state.update_data(idMeeting=message.text)
+	await state.update_data(isGuest=False)
+	await message.answer('ID события точно ' + str((await state.get_data())['idMeeting']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+
+
+@dp.callback_query(Text("shareID"))
+async def shareID(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID события (его можно узнать в /info):')
+	await state.set_state(Status.shareID)
+
+@dp.message(Status.shareID)
+async def shareIDWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="shareCreate"))
+	await state.update_data(idMeeting=message.text)
+	await state.update_data(isGuest=False)
+	await message.answer('ID события точно ' + str((await state.get_data())['idMeeting']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+
+
+@dp.callback_query(Text("shareCreate"))
+async def shareCreate(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	print(callback.from_user.id, callback.message.from_user.id)
+	if not (await isUserReg(callback)): await callback.message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+	resObj = await state.get_data()
+	name  = resObj['name']
+	isGuest  = resObj['isGuest']
+	idMeeting  = resObj['idMeeting']
+	await callback.message.answer('Чтобы поделиться отправьте пользователю следующее сообщение.')
+	await callback.message.answer('Вы приглашены на мероприятие "' + name + '"! Чтобы на него записаться, введите боту "/start ' + ('guest ' + str(callback.from_user.id) + '-' if isGuest else 'user ') + idMeeting + '" или, если Вы уже в системе, то "/info meeting join ' + (str(callback.from_user.id) + '-' if isGuest else '') + idMeeting + '"')
+	await state.set_state(Status.nothing)
+		
+# endregion
+
+# region admin
+
+@dp.message(Command('admin'))
+async def admin(message: types.Message, state: FSMContext):
+	if not (await isUserReg(message)): await message.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+	await state.clear()
+	parts = (message.text +  ' ').split(' ')
+	if message.text == '/admin':
+		txt = 'Для выбора нажать кнопки снизу.'
+		kbb = InlineKeyboardBuilder()
+		kbb.add(types.InlineKeyboardButton(text='Контроль оплаты', callback_data="adminPayCheck"))
+		kbb.add(types.InlineKeyboardButton(text='Исключить гостя', callback_data="adminGuestCheck"))
+		kbb.add(types.InlineKeyboardButton(text='Новый администратор', callback_data="adminNewCheck"))
+		kbb.add(types.InlineKeyboardButton(text='Получить ID пользователя', callback_data="adminUserCheck"))
+		kbb.add(types.InlineKeyboardButton(text='Администрируемые события', callback_data="adminList"))
+		kbb.adjust(1, repeat=True)
+		await message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
+	else:
+		await message.answer('Команда не распознана')
+
+# region adminPay
+
+@dp.callback_query(Text("adminPayCheck"))
+async def adminPayCheck(callback: types.CallbackQuery, state: FSMContext):
+	if not (await isUserReg(callback)): await callback.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+	await callback.answer()
+	data = await state.get_data()
+	txt = 'Ошибка. Начните операцию заново.'
+	if not ('status' in data) and 'idUser' in data and 'id' in data:
+		cur.execute('SELECT payStatus FROM Queue WHERE idUser=? AND idMeeting=?;', (data['idUser'], data['id']))
+		res = cur.fetchall()
+		if res:
+			await state.update_data(status='Оплачено' if bool(res[0][0]) else 'Не оплачено')
+			data = await state.get_data()
+		else:
+			await state.update_data(status='Не посетит событие')
+	kbb = InlineKeyboardBuilder()
+	txt = 'Для добавления информации нажать кнопки снизу.'
+	if 'id' in data: txt += '\nID события: ' + str(data['id'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID события', callback_data="adminPayId"))
+	if 'idUser' in data: txt += '\nID пользователя: ' + str(data['idUser'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID пользователя', callback_data="adminPayIdUser"))
+	if 'status' in data: txt += '\nСтатус оплаты: ' + str(data['status'])
+	kbb.add(types.InlineKeyboardButton(text='Статус оплаты', callback_data="adminPayStatus"))
+	kbb.adjust(1, repeat=True)
+	if 'id' and data and 'idUser' in data and 'status' in data and data['status'] != 'Не посетит событие':
+		kbb.add(types.InlineKeyboardButton(text='Подтвердить!', callback_data="adminPayCreate"))
+	await callback.message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
+	await state.set_state(Status.newMeetingCheck)
+
+
+
+@dp.callback_query(Text("adminPayId"))
+async def adminPayId(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('	SELECT Meeting.id, Meeting.name \
+					FROM Queue \
+					JOIN Meeting ON Queue.idMeeting = Meeting.id \
+					WHERE ((Queue.idUser = ? AND Queue.isNewAdmin = TRUE) \
+					OR Meeting.idCreator = ?) \
+					AND Meeting.date > DATETIME(\'now\', \'localtime\');', (callback.from_user.id, callback.from_user.id))
+	res = cur.fetchall()
+	if not res: await callback.message.answer('На данный момент нет предстоящих событий, в которых Вы администратор.'); return 0
+	kbb = InlineKeyboardBuilder()
+	for item in res:
+		kbb.add(types.InlineKeyboardButton(text='' + item[1], callback_data="adminPayId " + str(item[0])))
+	#await state.update_data(id=message.text)
+	await callback.message.answer('Выберите событие:', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(SUPERText("adminPayId "))
+async def adminPayIdChoise(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('SELECT name FROM Meeting WHERE id=?;', (callback.data.split(' ')[1], ))
+	await callback.message.answer('Выбрано событие ' + cur.fetchall()[0][0])
+	await state.update_data(id=int(callback.data.split(' ')[1]))
+	
+	await adminPayCheck(callback, state)
+
+@dp.callback_query(Text("adminPayIdUser"))
+async def adminPayIdUser(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID пользователя:')
+	await state.set_state(Status.adminPayIdUser)
+
+@dp.message(Status.adminPayIdUser)
+async def adminPayIdUserWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="adminPayCheck"))
+	await state.update_data(idUser=message.text)
+	await message.answer('ID пользователя точно ' + str((await state.get_data())['idUser']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+
+
+@dp.callback_query(Text("adminPayStatus"))
+async def adminPayStatus(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Оплатил', callback_data="adminPayStatusTrue"))
+	kbb.add(types.InlineKeyboardButton(text='Не оплатил', callback_data="adminPayStatusFalse"))
+	await callback.message.answer('Выберите статус оплаты:', reply_markup=kbb.as_markup(resize_keyboard=True))
+@dp.callback_query(Text("adminPayStatusTrue"))
+async def adminPayStatusTrue(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await state.update_data(status='Оплачено')
+	await adminPayCheck(callback, state)
+@dp.callback_query(Text("adminPayStatusFalse"))
+async def adminPayStatusFalse(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await state.update_data(status='Не оплачено')
+	await adminPayCheck(callback, state)
+	
+
+
+@dp.callback_query(Text("adminPayCreate"))
+async def adminPayCreate(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	if not (await isUserReg(callback)): await callback.message.answer('Вас еще нет в системе. Зарегисироваться /reg'); await state.set_state(Status.nothing); return 0
+	
+	data = await state.get_data()
+	idMeeting  = data['id']
+	idUser  = data['idUser']
+	status  = True if data['status'] == 'Оплачено' else False
+
+	cur.execute('UPDATE `Queue` SET `payStatus`=?, `payDate`=DATETIME(\'now\', \'localtime\') WHERE `idMeeting`=? AND idUser=?;', (status, idMeeting, idUser))
+	conn.commit()
+	
+	await callback.message.answer('Добавляю запись.')
+	await state.set_state(Status.nothing)
+
+# endregion
+# region adminGuest
+
+@dp.callback_query(Text("adminGuestCheck"))
+async def adminGuestCheck(callback: types.CallbackQuery, state: FSMContext):
+	if not (await isUserReg(callback)): await callback.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+	await callback.answer()
+	data = await state.get_data()
+	isGuestNow = 0
+	if 'idUser' in data and 'id' in data:
+		cur.execute('SELECT id FROM Queue WHERE idUser=? AND idMeeting=?;', (data['idUser'], data['id']))
+		res = cur.fetchall()
+		if res:
+			isGuestNow = 'Да' if bool(res[0][0]) else 'Нет'
+		else:
+			await state.update_data(status='Не посетит событие')
+	kbb = InlineKeyboardBuilder()
+	txt = 'Для добавления информации нажать кнопки снизу.'
+	if 'id' in data: txt += '\nID события: ' + str(data['id'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID события', callback_data="adminGuestId"))
+	if 'idUser' in data: txt += '\nID пользователя: ' + str(data['idUser'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID пользователя', callback_data="adminGuestIdUser"))
+	if isGuestNow:
+		txt += '\Гость записан? ' + isGuestNow
+	kbb.adjust(1, repeat=True)
+	if 'id' and data and 'idUser' in data:
+		kbb.add(types.InlineKeyboardButton(text='Подтвердить!', callback_data="adminGuestCreate"))
+	await callback.message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
+	await state.set_state(Status.newMeetingCheck)
+
+
+
+@dp.callback_query(Text("adminGuestId"))
+async def adminGuest(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('	SELECT Meeting.id, Meeting.name \
+					FROM Queue \
+					JOIN Meeting ON Queue.idMeeting = Meeting.id \
+					WHERE ((Queue.idUser = ? AND Queue.isNewAdmin = TRUE) \
+					OR Meeting.idCreator = ?) \
+					AND Meeting.date > DATETIME(\'now\', \'localtime\');', (callback.from_user.id, callback.from_user.id))
+	res = cur.fetchall()
+	if not res: await callback.message.answer('На данный момент нет предстоящих событий, в которых Вы администратор.'); return 0
+	kbb = InlineKeyboardBuilder()
+	for item in res:
+		kbb.add(types.InlineKeyboardButton(text='' + item[1], callback_data="adminGuestId " + str(item[0])))
+	#await state.update_data(id=message.text)
+	await callback.message.answer('Выберите событие:', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(SUPERText("adminGuestId "))
+async def adminPayIdChoise(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('SELECT name FROM Meeting WHERE id=?;', (callback.data.split(' ')[1], ))
+	await callback.message.answer('Выбрано событие ' + cur.fetchall()[0][0])
+	await state.update_data(id=int(callback.data.split(' ')[1]))
+	
+	await adminPayCheck(callback, state)
+
+@dp.callback_query(Text("adminGuestIdUser"))
+async def adminPayIdUser(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID пользователя:')
+	await state.set_state(Status.adminGuestIdUser)
+
+@dp.message(Status.adminGuestIdUser)
+async def adminPayIdUserWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="adminPayCheck"))
+	await state.update_data(idUser=message.text)
+	await message.answer('ID пользователя точно ' + str((await state.get_data())['idUser']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(Text("adminPayCreate"))
+async def adminPayCreate(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	if not (await isUserReg(callback)): await callback.message.answer('Вас еще нет в системе. Зарегисироваться /reg'); await state.set_state(Status.nothing); return 0
+	
+	data = await state.get_data()
+	idMeeting  = data['id']
+	idUser  = data['idUser']
+
+	cur.execute('DELETE FROM Queue WHERE idMeeting = ? AND idUser = ?;', (idMeeting, idUser))
+	conn.commit()
+	
+	await callback.message.answer('Удаляю запись.')
+	await state.set_state(Status.nothing)
+
+# endregion
+# region adminNew
+
+@dp.callback_query(Text("adminNewCheck"))
+async def adminNewCheck(callback: types.CallbackQuery, state: FSMContext):
+	if not (await isUserReg(callback)): await callback.answer('Вы еще не в системе. Используйте /reg'); await state.set_state(Status.nothing); return 0
+	await callback.answer()
+	data = await state.get_data()
+	if not ('status' in data) and 'idUser' in data and 'id' in data:
+		cur.execute('SELECT isNewAdmin FROM Queue WHERE idUser=? AND idMeeting=?;', (data['idUser'], data['id']))
+		res = cur.fetchall()
+		if res:
+			await state.update_data(status='Администратор' if bool(res[0][0]) else 'Не администратор')
+			data = await state.get_data()
+		else:
+			await state.update_data(status='Не посетит событие')
+	kbb = InlineKeyboardBuilder()
+	txt = 'Для добавления информации нажать кнопки снизу.'
+	if 'id' in data: txt += '\nID события: ' + str(data['id'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID события', callback_data="adminNewId"))
+	if 'idUser' in data: txt += '\nID пользователя: ' + str(data['idUser'])
+	else: kbb.add(types.InlineKeyboardButton(text='ID пользователя', callback_data="adminNewIdUser"))
+	if 'status' in data: txt += '\nСтатус пользователя: ' + str(data['status'])
+	kbb.add(types.InlineKeyboardButton(text='Статус пользователя', callback_data="adminNewIsNewAdmin"))
+	kbb.adjust(1, repeat=True)
+	if 'id' and data and 'idUser' in data:
+		kbb.add(types.InlineKeyboardButton(text='Подтвердить!', callback_data="adminNewCreate"))
+	await callback.message.answer(txt, reply_markup=kbb.as_markup(resize_keyboard=True))
+	await state.set_state(Status.newMeetingCheck)
+
+
+
+@dp.callback_query(Text("adminNewId"))
+async def adminNewId(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('	SELECT Meeting.id, Meeting.name \
+					FROM Queue \
+					JOIN Meeting ON Queue.idMeeting = Meeting.id \
+					WHERE Meeting.idCreator = ? \
+					AND Meeting.date > DATETIME(\'now\', \'localtime\');', (callback.from_user.id, ))
+	res = cur.fetchall()
+	if not res: await callback.message.answer('На данный момент нет предстоящих событий, которые Вы создали.'); return 0
+	kbb = InlineKeyboardBuilder()
+	for item in res:
+		kbb.add(types.InlineKeyboardButton(text='' + item[1], callback_data="adminNewId " + str(item[0])))
+	#await state.update_data(id=message.text)
+	await callback.message.answer('Выберите событие:', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+@dp.callback_query(SUPERText("adminNewId "))
+async def adminNewIdChoise(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('SELECT name FROM Meeting WHERE id=?;', (callback.data.split(' ')[1], ))
+	await callback.message.answer('Выбрано событие ' + cur.fetchall()[0][0])
+	await state.update_data(id=int(callback.data.split(' ')[1]))
+	
+	await adminNewCheck(callback, state)
+
+@dp.callback_query(Text("adminNewIdUser"))
+async def adminNewIdUser(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await callback.message.answer('Введите ID пользователя:')
+	await state.set_state(Status.adminNewIdUser)
+
+@dp.message(Status.adminNewIdUser)
+async def adminNewIdUserWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="adminNewCheck"))
+	await state.update_data(idUser=message.text)
+	await message.answer('ID пользователя точно ' + str((await state.get_data())['idUser']) + '? Если нет, введите еще раз.', reply_markup=kbb.as_markup(resize_keyboard=True))
+
+
+
+@dp.callback_query(Text("adminNewIsNewAdmin"))
+async def adminNewIsNewAdmin(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Администратор', callback_data="adminNewIsNewAdminTrue"))
+	kbb.add(types.InlineKeyboardButton(text='Не администратор', callback_data="adminNewIsNewAdminFalse"))
+	await callback.message.answer('Выберите статус пользователя:', reply_markup=kbb.as_markup(resize_keyboard=True))
+@dp.callback_query(Text("adminNewIsNewAdminTrue"))
+async def adminNewIsNewAdminTrue(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await state.update_data(status='Администратор')
+	await adminNewCheck(callback, state)
+@dp.callback_query(Text("adminNewIsNewAdminFalse"))
+async def adminNewIsNewAdminFalse(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	await state.update_data(status='Не администратор')
+	await adminNewCheck(callback, state)
+
+
+
+@dp.callback_query(Text("adminNewCreate"))
+async def aadminNewCreate(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	if not (await isUserReg(callback)): await callback.message.answer('Вас еще нет в системе. Зарегисироваться /reg'); await state.set_state(Status.nothing); return 0
+	
+	data = await state.get_data()
+	idMeeting  = data['id']
+	idUser  = data['idUser']
+	isNewAdmin = True if data['status'] == 'Администратор' else False
+
+	cur.execute('UPDATE `Queue` SET `isNewAdmin`=? WHERE `idMeeting`=? AND idUser=?;', (isNewAdmin, idMeeting, idUser))
+	conn.commit()
+	
+	await callback.message.answer('Добавляю запись.')
+	await state.set_state(Status.nothing)
+
+# endregion
+# region adminUser
+
+@dp.callback_query(Text("adminUserCheck"))
+async def adminUserCheck(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	
+	await callback.message.answer('Введите ник, тег, имя и фамилию через пробел или id пользрователя для получения всей возможной информации о нем.')
+	await state.set_state(Status.adminUserCheck)
+
+@dp.message(Status.adminUserCheck)
+async def adminUserCheckWait(message: types.Message, state: FSMContext):
+	kbb = InlineKeyboardBuilder()
+	kbb.add(types.InlineKeyboardButton(text='Да, дальше', callback_data="adminNewCheck"))
+
+	cur.execute('SELECT * FROM User WHERE id=? OR (name1 = ? AND name2 = ?) OR telega_name=? OR telega_tag=?', (message.text, (str(message.text) + '  ').split(' ')[0], (str(message.text) + '  ').split(' ')[1], message.text, message.text))
+	ret = cur.fetchall()
+	if ret:
+		ret = ret[0]
+		txt = 	'ID     =' + str(ret[0]) + '\n' + \
+				'Имя    =' + str(ret[1]) + '\n' + \
+				'Фамилия=' + str(ret[2]) + '\n' + \
+				'Ник    =' + str(ret[4]) + '\n' + \
+				'Тег    =' + str(ret[5])
+	else:
+		txt = 'Пользователя еще нет в системе или в запросе ошибка.'
+
+	await message.answer(txt)
+
+# endregion
+# region adminList
+
+
+
+# endregion
+
+@dp.callback_query(Text("adminList"))
+async def adminList(callback: types.CallbackQuery, state: FSMContext):
+	await callback.answer()
+	cur.execute('	SELECT Meeting.id, Meeting.name, Meeting.notificationText \
+					FROM Queue \
+					JOIN Meeting ON Queue.idMeeting = Meeting.id \
+					WHERE ((Queue.idUser = ? AND Queue.isNewAdmin = TRUE) \
+					OR Meeting.idCreator = ?) \
+					AND Meeting.date > DATETIME(\'now\', \'localtime\');', (callback.from_user.id, callback.from_user.id))
+	res = cur.fetchall()
+	if not res: await callback.message.answer('На данный момент нет предстоящих событий, в которых Вы администратор.'); return 0
+	txt = 'События:'
+	for item in res:
+		txt += '\n ' + str(item[0]) + ' - "' + str(item[1]) + '": ' + str(item[2]) + '.'
+
+	await callback.message.answer(txt)
+# endregion
+
 @dp.message(Command('ping'))
-async def send_welcome(message: types.Message):
+async def send_welcome(message: types.Message, state: FSMContext, dialog_manager: DialogManager = DialogManager):
 	if message.text == '/ping all':
 		await message.answer(str(message))
-	if message.text == '/ping id':
+	elif message.text == '/ping id':
 		await message.answer(str(message.chat.id))
-	if message.text == '/ping' or message.text == '/ping help':
+	elif message.text == '/ping' or message.text == '/ping help':
 		await message.answer('Простой способ получить отладочную информацию.\nusage: /ping [all|id|help|num]\n/ping all - all data\n/ping id - chat id\n/ping help - this message\n/ping num - id of /ping answer')
-	if message.text == '/ping num':
+	elif message.text == '/ping num':
 		await message.answer(str(message.message_id))
+
+
+	
 
 
 async def on_startup_and_daily():
